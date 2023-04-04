@@ -8,7 +8,7 @@ from argparse import Namespace
 import torch
 import torch.nn as nn
 from torch.nn.functional import interpolate
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from loguru import logger
 import matplotlib.pyplot as plt
 
@@ -33,7 +33,8 @@ from mariokart.tokens import TOKEN_GROUPS as MARIOKART_TOKEN_GROUPS
 from mario.special_mario_downsampling import special_mario_downsampling
 from generate_noise import generate_spatial_noise
 from models import load_trained_pyramid
-
+from celeste.image import one_hot_to_image, upscale
+from celeste.downsampling import celeste_downsampling
 
 class GenerateSamplesConfig(Config):
     out_: Optional[str] = None  # folder containing generator files
@@ -89,6 +90,12 @@ def generate_samples(generators, noise_maps, reals, noise_amplitudes, opt: Gener
         NameError(
             "name of --game not recognized. Supported: mario, zelda, megaman, mariokart")
 
+    if opt.log_progress:
+        tqdm_wrap = tqdm
+    else:
+        tqdm_wrap = lambda x: x
+        
+    final_tensors = []
     # Main sampling loop
     for sc, (G, Z_opt, noise_amp) in enumerate(zip(generators, noise_maps, noise_amplitudes)):
 
@@ -120,7 +127,8 @@ def generate_samples(generators, noise_maps, reals, noise_amplitudes, opt: Gener
                              (dir2save, opt.token_insert, current_scale))
             continue
 
-        logger.info("Generating samples at scale {}", current_scale)
+        if opt.log_progress:
+            logger.info("Generating samples at scale {}", current_scale)
 
         # Padding (should be chosen according to what was trained with)
         n_pad = int(1*opt.num_layer)
@@ -165,7 +173,7 @@ def generate_samples(generators, noise_maps, reals, noise_amplitudes, opt: Gener
             in_s = torch.zeros(1, channels, *in_s.shape[-2:]).to(opt.device)
 
         # Generate num_samples samples in current scale
-        for n in tqdm(range(0, num_samples, 1)):
+        for n in tqdm_wrap(range(0, num_samples, 1)):
 
             # Get noise image
             z_curr = generate_spatial_noise(
@@ -176,6 +184,7 @@ def generate_samples(generators, noise_maps, reals, noise_amplitudes, opt: Gener
             if (not images_prev) or current_scale == 0:  # if there is no "previous" image
                 I_prev = in_s
             else:
+
                 I_prev = images_prev[n]
 
                 # Transform to token groups if there is token insertion
@@ -183,8 +192,21 @@ def generate_samples(generators, noise_maps, reals, noise_amplitudes, opt: Gener
                     I_prev = group_to_token(
                         I_prev, opt.token_list, token_groups)
 
-            I_prev = interpolate(I_prev, [int(round(nzx)), int(
-                round(nzy))], mode='bilinear', align_corners=False)
+            
+            if opt.game != 'celeste':
+                I_prev = interpolate(I_prev, [int(round(nzx)), int(
+                    round(nzy))], mode='bilinear', align_corners=False)
+            else:
+                
+                if sc == 0:
+                    I_prev = upscale(I_prev, [int(round(nzx)), int(round(nzy))])
+    
+                else:
+                    I_prev = upscale(I_prev, [int(round(nzx)), int(round(nzy))])
+                
+                    if opt.log_all:
+                        opt.log_interp.append(one_hot_to_image(I_prev))
+                
             I_prev = m(I_prev)
 
             # We take the optimized noise map Z_opt as an input if we start generating on later scales
@@ -201,7 +223,12 @@ def generate_samples(generators, noise_maps, reals, noise_amplitudes, opt: Gener
             # Generate!
             ###########
             z_in = noise_amp * z_curr + I_prev
+            if opt.log_all:
+                opt.log_noise.append(one_hot_to_image(z_in))
             I_curr = G(z_in.detach(), I_prev, temperature=1)
+            
+            if opt.log_all:
+                opt.log_out.append(one_hot_to_image(I_curr))
 
             # Allow road insertion in mario kart levels
             if opt.game == 'mariokart':
@@ -228,23 +255,30 @@ def generate_samples(generators, noise_maps, reals, noise_amplitudes, opt: Gener
             # Save only last scale
             if current_scale == len(reals) - 1:
 
-                # Convert to ascii level
-                level = one_hot_to_ascii_level(I_curr.detach(), token_list)
+                if opt.game == 'celeste':
 
-                # Render and save level image
-                if render_images:
-                    img = opt.ImgGen.render(level)
-                    img.save("%s/img/%d_sc%d.png" %
-                             (dir2save, n, current_scale))
+                    level = one_hot_to_image(I_curr.detach())
+                    plt.imsave("%s/img/%d_sc%d.png" % (dir2save, n, current_scale), level)
+                    final_tensors.append(I_curr.detach())
+                   
+                else:
+                    # Convert to ascii level
+                    level = one_hot_to_ascii_level(I_curr.detach(), token_list)
 
-                # Save level txt
-                with open("%s/txt/%d_sc%d.txt" % (dir2save, n, current_scale), "w") as f:
-                    f.writelines(level)
+                    # Render and save level image
+                    if render_images:
+                        img = opt.ImgGen.render(level)
+                        img.save("%s/img/%d_sc%d.png" %
+                                 (dir2save, n, current_scale))
 
-                # Save torch tensor
-                if save_tensors:
-                    torch.save(I_curr, "%s/torch/%d_sc%d.pt" %
-                               (dir2save, n, current_scale))
+                    # Save level txt
+                    with open("%s/txt/%d_sc%d.txt" % (dir2save, n, current_scale), "w") as f:
+                        f.writelines(level)
+
+                    # Save torch tensor
+                    if save_tensors:
+                        torch.save(I_curr, "%s/torch/%d_sc%d.pt" %
+                                   (dir2save, n, current_scale))
 
             # Token insertion render (experimental!)
             # if current_scale == opt.token_insert:
@@ -262,7 +296,7 @@ def generate_samples(generators, noise_maps, reals, noise_amplitudes, opt: Gener
         # Go to next scale
         current_scale += 1
 
-    return I_curr.detach()  # return last generated image (usually unused)
+    return final_tensors
 
 
 def generate_mario_samples(opt: GenerateSamplesConfig):
@@ -321,7 +355,7 @@ def generate_mario_samples(opt: GenerateSamplesConfig):
         newpath = os.path.join(
             opt.generators_dir, "samples", opt.input_name[:-4])
         os.makedirs(newpath, exist_ok=True)
-        for f in tqdm(os.listdir(samples_dir)):
+        for f in tqdm_wrap(os.listdir(samples_dir)):
             if f.endswith('.txt'):
                 copyfile(os.path.join(samples_dir, f),
                          os.path.join(newpath, f))

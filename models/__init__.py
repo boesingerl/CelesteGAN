@@ -25,14 +25,12 @@ def init_models(opt):
     G.apply(weights_init)
     if opt.netG != "":
         G.load_state_dict(torch.load(opt.netG))
-    print(G)
 
     # discriminator initialization:
     D = Level_WDiscriminator(opt).to(opt.device)
     D.apply(weights_init)
     if opt.netD != "":
         D.load_state_dict(torch.load(opt.netD))
-    print(D)
 
     return D, G
 

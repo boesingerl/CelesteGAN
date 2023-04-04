@@ -1,0 +1,412 @@
+---
+jupyter:
+  jupytext:
+    formats: ipynb,md
+    text_representation:
+      extension: .md
+      format_name: markdown
+      format_version: '1.3'
+      jupytext_version: 1.14.5
+  kernelspec:
+    display_name: Python 3 (ipykernel)
+    language: python
+    name: python3
+---
+
+```python
+%load_ext autoreload
+%autoreload 2
+```
+
+```python
+import matplotlib.pyplot as plt
+import pickle
+import numpy as np
+import pandas as pd
+import torch as th
+from torch.nn.functional import interpolate
+from torch.nn import Softmax
+
+from celeste.downsampling import celeste_downsampling
+from celeste.image import color_to_idx, one_hot_to_image
+
+from config import Config
+import os
+
+import torch
+import wandb
+from tqdm.auto import tqdm
+
+from mario.level_utils import one_hot_to_ascii_level, token_to_group
+from mario.tokens import TOKEN_GROUPS as MARIO_TOKEN_GROUPS
+from mariokart.tokens import TOKEN_GROUPS as MARIOKART_TOKEN_GROUPS
+from mario.special_mario_downsampling import special_mario_downsampling
+from mariokart.special_mariokart_downsampling import special_mariokart_downsampling
+from models import init_models, reset_grads, restore_weights
+from models.generator import Level_GeneratorConcatSkip2CleanAdd
+from train_single_scale import train_single_scale
+
+from main import get_tags
+from celeste.level import LevelRenderer
+import PIL
+
+from glob import glob
+from generate_samples import generate_samples
+import networkx as nx
+
+from celeste.image import idx_to_onehot
+import kornia
+```
+
+## Read levels, create config
+
+```python
+opt = Config().parse_args("--input_dir input --input_name celeste_single_image.txt "
+                           "--num_layer 4 --alpha 100 --niter 1500 --nfc 64 --game celeste".split())
+
+opt.scales = [0.75, 0.4]
+opt.token_list = list(range(LevelRenderer.max_idx+1))
+opt.nc_current = LevelRenderer.max_idx+1
+opt.plot_scale = False
+opt.log_partial = True
+
+level_paths = sorted(glob('celeste/allnopad/*.png'))
+imgs =  [color_to_idx(np.array(PIL.Image.open(path))).astype('uint8') for path in level_paths]
+
+multiple_reals = []
+
+for ordinal in imgs:
+    
+    real = th.nn.functional.one_hot(th.tensor(ordinal, dtype=th.int64), LevelRenderer.max_idx+1).transpose(0,2).transpose(1,2)[None, :, :, :].to(opt.device)
+
+    scales = [[x, x] for x in opt.scales]
+    opt.num_scales = len(scales)
+
+    scaled_list = celeste_downsampling(opt.num_scales, scales, real, interp_args=dict(mode='area'))
+    tmp_reals = [*scaled_list, real.float()]
+    
+    multiple_reals.append(tmp_reals)
+```
+
+## Train one SinGan instance per level
+
+```python jupyter={"outputs_hidden": true}
+for i, reals in enumerate(tqdm(multiple_reals)):
+    
+    run = wandb.init(project="celeste_single", tags=get_tags(opt),
+                 config=opt, dir=opt.out)
+
+    
+    generators = []
+    noise_maps = []
+    noise_amplitudes = []
+    input_from_prev_scale = torch.zeros_like(reals[0])
+
+    stop_scale = len(reals)
+    opt.stop_scale = stop_scale
+
+
+# stop_scale = len(reals[0])
+# opt.stop_scale = stop_scale
+
+# Log the original input level as an image
+# wandb.log({"realimg": wandb.Image(np.hstack([one_hot_to_image(x[-1]) for x in reals[:10]]))},commit=False)
+# 
+
+    wandb.log({f"real{i}": wandb.Image(one_hot_to_image(reals[-1]))}, commit=False)
+    
+    lvlname = f'apr1/lvl_{i:03d}'
+    # Training Loop
+    for current_scale in range(0, stop_scale):
+        
+        opt.outf = "%s/%d" % (lvlname, current_scale)
+        try:
+            os.makedirs(opt.outf)
+        except OSError:
+            pass
+        
+        try:
+            os.makedirs("%s/state_dicts" % (lvlname), exist_ok=True)
+        except OSError:
+            pass
+        try:
+            os.makedirs(lvlname)
+        except OSError:
+            pass
+    
+
+        # If we are seeding, we need to adjust the number of channels
+        if current_scale < (opt.token_insert + 1):  # (stop_scale - 1):
+            opt.nc_current = len(token_group)
+
+        # Initialize models
+        D, G = init_models(opt)
+        # If we are seeding, the weights after the seed need to be adjusted
+        if current_scale == (opt.token_insert + 1):  # (stop_scale - 1):
+            D, G = restore_weights(D, G, current_scale, opt)
+
+        # Actually train the current scale
+        z_opt, input_from_prev_scale, G = train_single_scale(D,  G, reals, generators, noise_maps,
+                                                             input_from_prev_scale, noise_amplitudes, opt)
+        
+        # Reset grads and save current scale
+        G = reset_grads(G, False)
+        G.eval()
+        D = reset_grads(D, False)
+        D.eval()
+
+        generators.append(G)
+        noise_maps.append(z_opt)
+        noise_amplitudes.append(opt.noise_amp)
+
+    torch.save(noise_maps, "%s/noise_maps.pth" % (lvlname))
+    torch.save(generators, "%s/generators.pth" % (lvlname))
+    torch.save(reals, "%s/reals.pth" % (lvlname))
+    torch.save(noise_amplitudes, "%s/noise_amplitudes.pth" % (lvlname))
+    torch.save(input_from_prev_scale, "%s/input_from_prev_scale.pth" % (lvlname))
+    
+    torch.save(opt.num_layer, "%s/num_layer.pth" % (lvlname))
+    torch.save(opt.token_list, "%s/token_list.pth" % (lvlname))
+    
+    
+    fulldict = {
+        "noise_maps": noise_maps,
+        "generators":generators,
+        "reals":reals,
+        "noise_amplitudes":noise_amplitudes,
+        "lvlname":lvlname
+    }
+    
+    torch.save(fulldict, "%s/fulldict.pth" % (lvlname))
+    
+    wandb.save("%s/*.pth" % lvlname)
+
+    torch.save(G.state_dict(), "%s/state_dicts/G_%d.pth" % (lvlname, current_scale))
+    wandb.save("%s/state_dicts/*.pth" % lvlname)
+
+```
+
+## Generate samples
+
+```python
+def generate_level(path, maskpath=None):
+    opt = Config().parse_args("--input_dir input --input_name celeste_single_image.txt "
+                           "--num_layer 4 --alpha 100 --niter 500 --nfc 64 --game celeste".split())
+
+    opt.scales = [0.7, 0.4]
+    opt.token_list = list(range(LevelRenderer.max_idx+1))
+    opt.nc_current = LevelRenderer.max_idx+1
+    opt.log_all = True
+    opt.log_progress = False
+
+    opt.log_interp = []
+    opt.log_noise = []
+    opt.log_out = []
+    
+                
+    
+    dic = torch.load(path)
+
+    noise_maps = dic['noise_maps']
+    generators = dic['generators']
+    reals = dic['reals']
+    noise_amplitudes = dic['noise_amplitudes']
+    
+     
+    use_reals = reals
+    use_maps = noise_maps
+    
+    if maskpath is not None:
+        level = (plt.imread(maskpath)*255).astype(int)
+
+        if level.shape[-1] == 3:
+            level = np.dstack((level, np.ones((level.shape[0], level.shape[1]))*255))
+
+        ordinal = color_to_idx(level)
+        mask = th.nn.functional.one_hot(
+            th.tensor(ordinal, dtype=th.int64), LevelRenderer.max_idx+1).transpose(0,2).transpose(1,2)[None, :, :, :].to(opt.device).float()
+        mask[:, 0, :, :] = 0
+    else:
+        mask = None
+
+   
+
+    all_samples = generate_samples(generators, 
+                     use_maps,
+                     use_reals,
+                     noise_amplitudes,
+                     opt,
+                     in_s=mask,
+                     save_dir="arbitrary_random_samples",num_samples=1)
+    
+    samp = all_samples[0]
+    
+    if maskpath is not None:
+        mask_scaled = celeste_downsampling(1, [[samp.shape[-2]/mask.shape[-2], samp.shape[-1]/mask.shape[-1]]], mask)[0]
+
+        samp[0,20] = mask_scaled[0, 20]*20
+        samp[0,32] = mask_scaled[0, 32]*20
+
+        yfin, xfin = [torch.median(x).item() for x in torch.where(samp[0].argmax(0) == 32)]
+        ysta, xsta = [torch.median(x).item() for x in torch.where(samp[0].argmax(0) == 20)]
+    
+        return opt,force_path(all_samples[0])
+    
+    return opt, all_samples[0]
+
+def plot_generation(ident, maskpath='celeste/manual_level/masksmall.png', img_last=False):
+
+    path = all_level_paths[ident]
+    optmp, lvl = generate_level(path, maskpath=maskpath)
+    
+    len_ = len(optmp.log_noise)
+    fig, axs = plt.subplots(ncols=len_, nrows=3, figsize=(len_*3, 9))
+    
+    for i, (axn, axo, axi) in enumerate(axs.T):
+        axn.imshow(optmp.log_noise[i])
+        axo.imshow(optmp.log_out[i])
+        
+        if len(optmp.log_interp) > i:
+            axi.imshow(optmp.log_interp[i])        
+        else:
+            if img_last:
+                axi.imshow(plt.imread(level_paths[ident]))       
+            else:
+                axi.axis('off')
+                
+def graph_from_img(bw):
+    
+    G = nx.Graph()
+
+    for y, row in enumerate(bw):
+
+        for x, val in enumerate(row):
+
+            G.add_node((x,y))
+
+            try:
+                if bw[y, x-1].item() == val.item() and val.item() == 0:
+                
+                    if not neighbours_wall(bw, (x-1,y)) and not neighbours_wall(bw, (x,y)):
+                        G.add_edge((x,y), (x-1, y), weight=1)
+                    else:
+                        G.add_edge((x,y), (x-1, y), weight=50)
+                        
+                else:
+                    G.add_edge((x,y), (x-1, y), weight=100)
+            except:
+                pass
+
+            try:
+                if bw[y-1, x].item() == val.item() and val.item() == 0:
+                    if not neighbours_wall(bw, (x, y-1)) and not neighbours_wall(bw, (x,y)):
+                        G.add_edge((x,y), (x, y-1), weight=1)
+                    else:
+                        G.add_edge((x,y), (x, y-1), weight=50)
+                        
+                else:
+                    G.add_edge((x,y), (x-1, y), weight=100)
+            except:
+                pass
+            
+    return G
+
+def neighbours_wall(img, point):
+    
+    x,y = point
+    
+    try:
+        if img[y-1, x] == 1:
+            return True
+    except:
+        pass
+    
+    try:
+        if img[y+1, x] == 1:
+            return True
+    except:
+        pass
+    
+    try:
+        if img[y, x-1] == 1:
+            return True
+    except:
+        pass
+    
+    try:
+        if img[y, x+1] == 1:
+            return True
+    except:
+        pass
+    
+    return False
+
+def dist(a, b):
+    (x1, y1) = a
+    (x2, y2) = b
+    return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
+
+
+
+def force_path(sample):
+
+    sample = sample.clone()
+    
+    bw = sample[0].argmax(0).cpu()
+    bw[bw > 1] = 0
+
+    G = graph_from_img(bw)
+
+    yfin, xfin = [torch.median(x).item() for x in torch.where(sample[0].argmax(0) == 32)]
+    ysta, xsta = [torch.median(x).item() for x in torch.where(sample[0].argmax(0) == 20)]
+
+    path = nx.astar_path(G, (xfin, yfin), (xsta, ysta), heuristic=dist, weight="weight")
+
+    
+    def set_path(img, point):
+        x,y = point
+        
+        
+        def tryset(img, x, y):
+            try:
+                img[0, 1, y, x] = 0
+            except:
+                pass
+            
+        tryset(img, x, y)
+        tryset(img, x-1, y)
+        tryset(img, x+1, y)
+        tryset(img, x, y-1)
+        tryset(img, x, y+1)
+        
+    for p in path:
+        set_path(sample, p)
+        
+    return sample
+```
+
+```python
+all_level_paths = sorted(glob('apr1/lvl_*/fulldict.pth'))
+
+levels = []
+levnomask = []
+lis = []
+
+for i, path in enumerate(all_level_paths):
+    
+    try:
+        levels.append(generate_level(path, maskpath='celeste/manual_level/masksmall.png')[1].cpu())
+        levnomask.append(generate_level(path, maskpath=None)[1].cpu())
+        lis.append(i)
+    except Exception as e:
+        print(e)
+        pass
+    
+torch.save(levels, 'tmplevels.pth')
+```
+
+## Plot all states of generation (and original level to compare)
+
+```python
+plot_generation(40, img_last=True)
+```

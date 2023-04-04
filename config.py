@@ -17,7 +17,7 @@ from megaman.level_image_gen import LevelImageGen as MegamanLevelGen
 
 class Config(Tap):
     game: Literal["mario", "mariokart", "megaman",
-                  "zelda"] = "mario"  # Which game is to be used?
+                  "zelda", "celeste"] = "mario"  # Which game is to be used?
     not_cuda: bool = False  # disables cuda
     netG: str = ""  # path to netG (to continue training)
     netD: str = ""  # path to netD (to continue training)
@@ -58,7 +58,6 @@ class Config(Tap):
 
         if self.manualSeed is None:
             self.manualSeed = random.randint(1, 10000)
-        print("Random Seed: ", self.manualSeed)
         set_seed(self.manualSeed)
 
         # Defaults for other namespace values that will be overwritten during runtime
@@ -73,4 +72,5 @@ class Config(Tap):
         # which scale to stop on - usually always last scale defined
         self.stop_scale = self.num_scales
         self.ImgGen: Union[MarioLevelGen, ZeldaLevelGen,
-                           MegamanLevelGen, MariokartLevelGen] = MarioLevelGen(self.game + "/sprites")
+                           MegamanLevelGen, MariokartLevelGen] = MarioLevelGen(self.game + "/sprites") if self.game in ["mario", "mariokart", "megaman",
+                  "zelda"] else None

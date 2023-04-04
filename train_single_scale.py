@@ -6,9 +6,11 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.nn.functional import interpolate
 from loguru import logger
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import numpy as np
 import wandb
+
+import logging
 
 from draw_concat import draw_concat
 from generate_noise import generate_spatial_noise
@@ -19,6 +21,12 @@ from megaman.tokens import TOKEN_GROUPS as MEGAMAN_TOKEN_GROUPS
 from mariokart.tokens import TOKEN_GROUPS as MARIOKART_TOKEN_GROUPS
 from models import calc_gradient_penalty, save_networks
 
+from celeste.image import one_hot_to_image, idx_to_onehot, color_to_idx, upscale
+from celeste.level import pad_square
+from celeste.downsampling import celeste_downsampling
+
+
+import matplotlib.pyplot as plt
 
 def update_noise_amplitude(z_prev, real, opt):
     """ Update the amplitude of the noise for the current scale according to the previous noise map. """
@@ -41,7 +49,7 @@ def train_single_scale(D, G, reals, generators, noise_maps, input_from_prev_scal
         token_group = MEGAMAN_TOKEN_GROUPS
     else:  # if opt.game == 'mariokart':
         token_group = MARIOKART_TOKEN_GROUPS
-
+    
     if opt.use_multiple_inputs:
         real_group = []
         nzx_group = []
@@ -72,8 +80,8 @@ def train_single_scale(D, G, reals, generators, noise_maps, input_from_prev_scal
     # setup optimizer
     optimizerD = optim.Adam(D.parameters(), lr=opt.lr_d, betas=(opt.beta1, 0.999))
     optimizerG = optim.Adam(G.parameters(), lr=opt.lr_g, betas=(opt.beta1, 0.999))
-    schedulerD = torch.optim.lr_scheduler.MultiStepLR(optimizer=optimizerD, milestones=[1600, 2500], gamma=opt.gamma)
-    schedulerG = torch.optim.lr_scheduler.MultiStepLR(optimizer=optimizerG, milestones=[1600, 2500], gamma=opt.gamma)
+    schedulerD = torch.optim.lr_scheduler.MultiStepLR(optimizer=optimizerD, milestones=[400, 450], gamma=opt.gamma)
+    schedulerG = torch.optim.lr_scheduler.MultiStepLR(optimizer=optimizerG, milestones=[400, 450], gamma=opt.gamma)
 
     if current_scale == 0:  # Generate new noise
         if opt.use_multiple_inputs:
@@ -108,6 +116,13 @@ def train_single_scale(D, G, reals, generators, noise_maps, input_from_prev_scal
         grad_g.append(torch.zeros(p.shape).to(opt.device))
 
     for epoch in tqdm(range(opt.niter)):
+        
+        prev_fakes = []
+        prev_reals = []
+        prev_zopts = []
+        prev_zprevs = []
+        
+            
         step = current_scale * opt.niter + epoch
         if opt.use_multiple_inputs:
             group_steps = len(real_group)
@@ -167,6 +182,7 @@ def train_single_scale(D, G, reals, generators, noise_maps, input_from_prev_scal
                         opt.noise_amp = 1
                     else:  # First step in NOT the lowest scale
                         # We need to adapt our inputs from the previous scale and add noise to it
+
                         prev = draw_concat(generators, noise_maps, reals, noise_amplitudes, prev_scale_results,
                                            "rand", pad_noise, pad_image, opt)
 
@@ -174,7 +190,9 @@ def train_single_scale(D, G, reals, generators, noise_maps, input_from_prev_scal
                         if current_scale == (opt.token_insert + 1):
                             prev = group_to_token(prev, opt.token_list, token_group)
 
-                        prev = interpolate(prev, real.shape[-2:], mode="bilinear", align_corners=False)
+                        # prev = interpolate(prev, real.shape[-2:], mode="bilinear", align_corners=False)
+                        prev = upscale(prev, real.shape[-2:])
+                        
                         prev = pad_image(prev)
                         z_prev = draw_concat(generators, noise_maps, reals, noise_amplitudes, prev_scale_results,
                                              "rec", pad_noise, pad_image, opt)
@@ -183,7 +201,9 @@ def train_single_scale(D, G, reals, generators, noise_maps, input_from_prev_scal
                         if current_scale == (opt.token_insert + 1):
                             z_prev = group_to_token(z_prev, opt.token_list, token_group)
 
-                        z_prev = interpolate(z_prev, real.shape[-2:], mode="bilinear", align_corners=False)
+                        # z_prev = interpolate(z_prev, real.shape[-2:], mode="bilinear", align_corners=False)
+                        z_prev = upscale(z_prev, real.shape[-2:])
+                        
                         opt.noise_amp = update_noise_amplitude(z_prev, real, opt)
                         z_prev = pad_image(z_prev)
                 else:  # Any other step
@@ -197,13 +217,17 @@ def train_single_scale(D, G, reals, generators, noise_maps, input_from_prev_scal
                     if current_scale == (opt.token_insert + 1):
                         prev = group_to_token(prev, opt.token_list, token_group)
 
-                    prev = interpolate(prev, real.shape[-2:], mode="bilinear", align_corners=False)
+                    # prev = interpolate(prev, real.shape[-2:], mode="bilinear", align_corners=False)
+                    opt.pre_up = prev.clone()
+                    prev = upscale(prev, real.shape[-2:])
+                    opt.post_up = prev.clone()
+                    
                     prev = pad_image(prev)
 
                 # After creating our correct noise input, we feed it to the generator:
                 noise = opt.noise_amp * noise_ + prev
                 fake = G(noise.detach(), prev, temperature=1 if current_scale != opt.token_insert else 1)
-
+                
                 # Then run the result through the discriminator
                 output = D(fake.detach())
                 errD_fake = output.mean()
@@ -233,7 +257,7 @@ def train_single_scale(D, G, reals, generators, noise_maps, input_from_prev_scal
                                f"D_real_grad@{current_scale}": diff_d_real,
                                f"D_fake_grad@{current_scale}": diff_d_fake,
                                },
-                              step=step, sync=False)
+                              step=step)
                 optimizerD.step()
 
                 if opt.use_multiple_inputs:
@@ -277,36 +301,96 @@ def train_single_scale(D, G, reals, generators, noise_maps, input_from_prev_scal
                     Z_opt = z_opt
 
                 optimizerG.step()
+                
+            if (epoch % 100 == 0 or epoch == (opt.niter - 1)) and curr_inp < 10:
+                    
+                prev_fakes.append(fake)
+                prev_reals.append(real)
+                prev_zopts.append(Z_opt)
+                prev_zprevs.append(z_prev)
+                
+                
+                    
+            
 
         # More Logging:
         if step % 10 == 0:
             wandb.log({f"noise_amplitude@{current_scale}": opt.noise_amp,
                        f"rec_loss@{current_scale}": rec_loss.item(),
                        f"G_grad@{current_scale}": diff_g},
-                      step=step, sync=False, commit=True)
+                      step=step, commit=True)
 
         # Rendering and logging images of levels
-        if epoch % 500 == 0 or epoch == (opt.niter - 1):
+        if epoch % 100 == 0 or epoch == (opt.niter - 1):
             if opt.token_insert >= 0 and opt.nc_current == len(token_group):
                 token_list = [list(group.keys())[0] for group in token_group]
             else:
                 token_list = opt.token_list
 
-            img = opt.ImgGen.render(one_hot_to_ascii_level(fake.detach(), token_list))
-            img2 = opt.ImgGen.render(one_hot_to_ascii_level(
-                G(Z_opt.detach(), z_prev, temperature=1 if current_scale != opt.token_insert else 1).detach(),
-                token_list))
-            real_scaled = one_hot_to_ascii_level(real.detach(), token_list)
-            img3 = opt.ImgGen.render(real_scaled)
-            wandb.log({f"G(z)@{current_scale}": wandb.Image(img),
-                       f"G(z_opt)@{current_scale}": wandb.Image(img2),
-                       f"real@{current_scale}": wandb.Image(img3)},
-                      sync=False, commit=False)
+            if opt.game == 'celeste':
+                
+                from itertools import chain
+                partials = []
+                if opt.log_partial:
+                    pass
+#                     partials = [interpolate(part, fake.shape[-2:], mode="bilinear", align_corners=False) for part in opt.partials]
+                    
+#                     partials2 = [celeste_downsampling(1, [[fake.shape[-2]/part.shape[-2], 
+#                                                           fake.shape[-1]/part.shape[-1]]]
+#                                                           , idx_to_onehot(part[0].argmax(0),opt.device))[0] for part in opt.partials]
+                    
+#                     partials3 = [interpolate(idx_to_onehot(part[0].argmax(0),opt.device).float(),
+#                                              fake.shape[-2:], mode="bilinear", align_corners=False) for part in opt.partials]
+                    
+                    # partials4 = [interpolate(idx_to_onehot(part[0].argmax(0),opt.device).float(),
+                    #                          fake.shape[-2:], mode="area") for part in opt.partials]
+                    
+#                     if len(partials) > 0:
+                        
+#                         fig, axs = plt.subplots(ncols=5, figsize=(15,5))
+                        
+#                         axs[0].imshow(one_hot_to_image(opt.partials[0]))
+#                         axs[1].imshow(one_hot_to_image(partials[0]))
+#                         axs[2].imshow(one_hot_to_image(partials2[0]))
+#                         axs[3].imshow(one_hot_to_image(partials3[0]))
+#                         axs[4].imshow(one_hot_to_image(partials4[0]))
+                        
+                        
+#                         plt.show()
 
-            real_scaled_path = os.path.join(wandb.run.dir, f"real@{current_scale}.txt")
-            with open(real_scaled_path, "w") as f:
-                f.writelines(real_scaled)
-            wandb.save(real_scaled_path)
+                if opt.pre_up is not None:
+                    wandb.log({f"pre_up": wandb.Image(one_hot_to_image(opt.pre_up))},commit=False)
+                    wandb.log({f"post_up": wandb.Image(one_hot_to_image(opt.post_up))},commit=False)
+            
+
+                        
+                wandb.log({f"noisetest": wandb.Image(one_hot_to_image(noise))},commit=False)
+                # for num, noiseimg in enumerate(opt.partials):
+                #     wandb.log({f"unscaled_{num}": wandb.Image(one_hot_to_image(noiseimg))},commit=False)
+        
+                img = np.hstack([one_hot_to_image(fk.detach()) for fk in chain(prev_fakes)])
+                img2 = np.hstack([one_hot_to_image(G(zop.detach(), z_prev, temperature=1 if current_scale != opt.token_insert else 1).detach()) for zop in prev_zopts])
+                img3 = np.hstack([one_hot_to_image(rl.detach()) for rl in prev_reals])
+            else:
+                img = opt.ImgGen.render(one_hot_to_ascii_level(fake.detach(), token_list))
+                img2 = opt.ImgGen.render(one_hot_to_ascii_level(
+                    G(Z_opt.detach(), z_prev, temperature=1 if current_scale != opt.token_insert else 1).detach(),
+                    token_list))
+                real_scaled = one_hot_to_ascii_level(real.detach(), token_list)
+                img3 = opt.ImgGen.render(real_scaled)
+                
+            if opt.alpha > 0:
+                wandb.log({f"G(z)@{current_scale}": wandb.Image(img),
+                           f"G(z_opt)@{current_scale}": wandb.Image(img2),
+                           f"real@{current_scale}": wandb.Image(img3)},commit=False)
+            else:
+                wandb.log({f"G(z)@{current_scale}": wandb.Image(img),
+                           f"real@{current_scale}": wandb.Image(img3)},commit=False)
+
+            # real_scaled_path = os.path.join(wandb.run.dir, f"real@{current_scale}.txt")
+            # with open(real_scaled_path, "w") as f:
+            #     f.writelines(real_scaled)
+            # wandb.save(real_scaled_path)
 
             # Learning Rate scheduler step
             schedulerD.step()
@@ -316,8 +400,12 @@ def train_single_scale(D, G, reals, generators, noise_maps, input_from_prev_scal
 
     if opt.use_multiple_inputs:
         z_opt = z_opt_group
-
-    torch.save(z_opt, "%s/z_opt.pth" % opt.outf)
-    save_networks(G, D, z_opt, opt)
-    wandb.save(opt.outf)
+    
+    try:
+        torch.save(z_opt, "%s/z_opt.pth" % opt.outf)
+        save_networks(G, D, z_opt, opt)
+        wandb.save(opt.outf)
+    except:
+        logging.warning('Could not save')
+    
     return z_opt, input_from_prev_scale, G

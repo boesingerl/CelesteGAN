@@ -2,7 +2,7 @@ import torch
 from torch.nn.functional import interpolate
 from torch.nn import Softmax
 import torch as th
-from .level import LevelRenderer
+from .celeste_level.level import LevelRenderer
 
 def celeste_downsampling(num_scales, scales, image, token_list = [1,
                                                                   0,

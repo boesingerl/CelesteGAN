@@ -47,7 +47,7 @@ from models.generator import Level_GeneratorConcatSkip2CleanAdd
 from train_single_scale import train_single_scale
 
 from main import get_tags
-from celeste.level import LevelRenderer
+from celeste.celeste_level.level import LevelRenderer
 import PIL
 
 from glob import glob

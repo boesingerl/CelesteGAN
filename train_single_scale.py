@@ -22,7 +22,7 @@ from mariokart.tokens import TOKEN_GROUPS as MARIOKART_TOKEN_GROUPS
 from models import calc_gradient_penalty, save_networks
 
 from celeste.image import one_hot_to_image, idx_to_onehot, color_to_idx, upscale
-from celeste.level import pad_square
+from celeste.celeste_level.level import pad_square
 from celeste.downsampling import celeste_downsampling
 
 

@@ -6,7 +6,7 @@ import torch as th
 from torch.nn.functional import interpolate
 
 from kornia.morphology import dilation
-from .level import LevelRenderer
+from .celeste_level.level import LevelRenderer
 from .downsampling import celeste_downsampling
 
 def one_hot_to_image(onehot,norm = plt.Normalize(vmin=0, vmax=LevelRenderer.max_idx),cm = plt.cm.nipy_spectral):

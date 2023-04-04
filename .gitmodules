@@ -1,0 +1,3 @@
+[submodule "celeste/celeste_level"]
+	path = celeste/celeste_level
+	url = git@github.com:boesingerl/celeste_level.git

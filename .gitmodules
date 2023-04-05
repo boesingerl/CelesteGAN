@@ -2,3 +2,4 @@
 	path = celeste/celeste_level
 	url = git@github.com:boesingerl/celeste_level.git
 	ignore = untracked
+	update = merge

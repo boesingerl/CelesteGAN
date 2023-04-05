@@ -90,7 +90,7 @@ for ordinal in imgs:
 
 ## Train one SinGan instance per level
 
-```python jupyter={"outputs_hidden": true}
+```python
 for i, reals in enumerate(tqdm(multiple_reals)):
     
     run = wandb.init(project="celeste_single", tags=get_tags(opt),
@@ -237,7 +237,8 @@ def generate_level(path, maskpath=None):
                      noise_amplitudes,
                      opt,
                      in_s=mask,
-                     save_dir="arbitrary_random_samples",num_samples=1)
+                     save_dir="arbitrary_random_samples",
+                     num_samples=1)
     
     samp = all_samples[0]
     
@@ -386,27 +387,62 @@ def force_path(sample):
 ```
 
 ```python
-all_level_paths = sorted(glob('apr1/lvl_*/fulldict.pth'))
+%%time
 
-levels = []
-levnomask = []
-lis = []
+def get_levels(size=20):
 
-for i, path in enumerate(all_level_paths):
+    all_level_paths = np.random.choice(glob('apr1/lvl_*/fulldict.pth'), size=size)
+
+    levels = []
+    levnomask = []
+    lis = []
+
+    for i, path in enumerate(all_level_paths):
+
+        try:
+            levels.append(generate_level(path, maskpath='celeste/manual_level/masksmall.png')[1].cpu())
+            lis.append(i)
+        except Exception as e:
+            print(e)
+            pass
+
+    level_paths = sorted(glob('celeste/allnopad/*.png'))
+    impaths = [lpath for i,lpath in enumerate(level_paths) if i in lis]
+
+    return levels
     
-    try:
-        levels.append(generate_level(path, maskpath='celeste/manual_level/masksmall.png')[1].cpu())
-        levnomask.append(generate_level(path, maskpath=None)[1].cpu())
-        lis.append(i)
-    except Exception as e:
-        print(e)
-        pass
-    
-torch.save(levels, 'tmplevels.pth')
+levels = get_levels()
 ```
 
 ## Plot all states of generation (and original level to compare)
 
 ```python
 plot_generation(40, img_last=True)
+```
+
+## Serve map using http host
+
+```python
+from flask import Flask, send_from_directory
+from celeste.celeste_level.attributes import map_from_tensors
+from celeste.celeste_level.level import LevelEncoder
+from pathlib import Path
+
+app = Flask(__name__)
+
+@app.route("/")
+def serve_tmp():
+    
+    levels = get_levels()
+    
+    map_ = map_from_tensors(levels)
+    os.makedirs('tmp', exist_ok=True)
+    LevelEncoder.write_level('tmp/ai_level.bin', map_)
+    
+    return send_from_directory(Path('./tmp/'), 'ai_level.bin') 
+
+```
+
+```python
+app.run(host="0.0.0.0", port="9999")
 ```

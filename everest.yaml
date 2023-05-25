@@ -1,0 +1,6 @@
+- Name: Celeste GAN
+  Version: 1.0.0
+  DLL: bin/Debug/net7.0/celesteGAN.dll
+  Dependencies:
+    - Name: Everest
+      Version: 1.3164.0

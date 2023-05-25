@@ -1,7 +1,7 @@
 # CelesteGAN : A Celeste level generator using GANs !
 
 <p align="center">
-  <img src="https://user-images.githubusercontent.com/32189761/229797890-d4545ce7-0c95-4d5d-92d6-6ee087042909.png" />
+  <img src="https://github.com/boesingerl/CelesteGAN/assets/32189761/dd0a5ca2-6f85-44c9-8791-a392f4880c20" width="100%"/>
 </p>
 
 Fork of TOAD-Gan (by Maren Awiszus, Frederik Schubert), to allow level generation for the game Celeste.

@@ -47,8 +47,8 @@ namespace Celeste.Mod.GAN {
 
                                 sw.WriteLine("echo `pwd`");
                                 sw.WriteLine("conda activate minimal");
-                                sw.WriteLine($"cd {Path.Combine("Mods", "CelesteGAN", "Code")}");
-                                sw.WriteLine($"python celestegan.pyz {Path.Combine("..", "Maps", "boesingerl", "celesteGAN", "GANMap.bin")}");
+                                sw.WriteLine($"cd {Path.Combine("Mods", "CelesteGAN")}");
+                                sw.WriteLine($"python celestegan.pyz {Path.Combine("Maps", "boesingerl", "celesteGAN", "GANMap.bin")}");
                             }
                         }
 

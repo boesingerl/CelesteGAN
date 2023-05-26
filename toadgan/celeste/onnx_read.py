@@ -17,9 +17,11 @@ import json
 import gzip
 import networkx as nx
 import pickle
-import cv2
+# import cv2
 import os
 import importlib.resources
+import zipfile
+import tempfile
 
 from glob import glob
 from dataclasses import dataclass
@@ -27,18 +29,24 @@ from typing import Optional
 
 from contextlib import redirect_stdout
 
-from celeste_level.attributes import map_from_tensors
-from celeste_level.level import LevelEncoder, LevelRenderer
+from .celeste_level.attributes import map_from_tensors
+from .celeste_level.level import LevelEncoder, LevelRenderer
 
-import celeste_level
+from . import celeste_level
 from joblib import Parallel, delayed
+
+
+ARCHIVE_NAME = "celestegan.pyz"
+MASK_PATH = os.path.join('data', 'mask_small.json.gz')
+GENERATORS_PATH = os.path.join('data', 'generators', '*.json.gz')
+
 
 # In[32]:
 
 class Upscaler:
     
-    def dilate(img, kernel):
-        return np.stack([cv2.dilate(x, kernel, iterations=1) for x in img])
+    # def dilate(img, kernel):
+    #     return np.stack([cv2.dilate(x, kernel, iterations=1) for x in img])
     
     def __init__(self, path='upscale.onnx'):
         readbytes = importlib.resources.read_binary(celeste_level, path)
@@ -49,7 +57,7 @@ class Upscaler:
     def __call__(self, image, shape):
         
         newimg = image.copy()
-        newimg[:, 2:] = Upscaler.dilate(newimg[0, 2:], self.kernel)[None,:,:,:]
+        #newimg[:, 2:] = Upscaler.dilate(newimg[0, 2:], self.kernel)[None,:,:,:]
 
         return self.sess.run(None, {'image': newimg, 'shape0':np.array(shape[0]), 'shape1':np.array(shape[1])})[0]
 
@@ -116,6 +124,7 @@ def draw_concat(generators, noise_maps, reals, noise_amplitudes, pad_noise, pad_
 class LevelGen:
     
     def __init__(self, generators, noise_maps, reals, noise_amplitudes):
+        import torch
         self.bytes = []
         for generator, noise_map in zip(generators, noise_maps):
             bytio = io.BytesIO()
@@ -143,7 +152,9 @@ class LevelGen:
             gen_dict['reals']  = [np.asarray(real).tolist() for real in self.reals]
             
             handle.write(json.dumps(gen_dict).encode('utf-8'))
-            
+    
+    
+    @staticmethod
     def read_json(path):
                     
                          
@@ -309,61 +320,51 @@ def main():
                     prog='Celeste Level Creator',
                     description='Create celeste levels with GANs')
 
-    parser.add_argument('maskpath')
-    parser.add_argument('inpath')
     parser.add_argument('outpath')
-
+    parser.add_argument('--levelsize', type=int, choices=range(1, 100), default=20)
+    
     parsed = parser.parse_args()
 
+    zf = zipfile.ZipFile(ARCHIVE_NAME)
 
-    with gzip.open(parsed.maskpath, 'rb') as handle:
-        masknp = np.array(json.loads(handle.read().decode()), dtype='float32')
-        masknp[0,0] = 0
-        masknp[0,20] = masknp[0,20]*2
-        masknp[0,32] = masknp[0,32]*2
+    with tempfile.TemporaryDirectory() as tempdir:
+        zf.extractall(tempdir)
+        
+        with gzip.open(os.path.join(tempdir, MASK_PATH), 'rb') as handle:
+            masknp = np.array(json.loads(handle.read().decode()), dtype='float32')
+            masknp[0,0] = 0
+            masknp[0,20] = masknp[0,20]*2
+            masknp[0,32] = masknp[0,32]*2
 
-    gen_paths = np.random.choice(glob(os.path.join(parsed.inpath, '*.json.gz')), size=20)
-    opt = GenerateSamplesConfig()
-    
-    def level_from_path(path):
-    
-        scaler = Upscaler()
+        gen_paths = np.random.choice(glob(GENERATORS_PATH), size=parsed.levelsize)
+        opt = GenerateSamplesConfig()
 
-        read_gen, noise_maps, reals, noise_amps = LevelGen.read_json(path)
+        def level_from_path(path):
 
-        level = draw_concat(read_gen, noise_maps, reals, noise_amps, padding_func, padding_func , opt, scaler, in_s=masknp)
+            scaler = Upscaler()
 
-        scaled_mask = scaler(masknp, level.shape[-2:])
-        level[0,20] = scaled_mask[0, 20]*20
-        level[0,32] = scaled_mask[0, 32]*20
-        level[0,17] = scaled_mask[0, 17]*20
+            read_gen, noise_maps, reals, noise_amps = LevelGen.read_json(path)
 
-        level = force_path(level)
+            level = draw_concat(read_gen, noise_maps, reals, noise_amps, padding_func, padding_func , opt, scaler, in_s=masknp)
 
-        return level
-    
-    levels = Parallel(n_jobs=4, backend='loky')(delayed(level_from_path)(path) for path in gen_paths)
+            scaled_mask = scaler(masknp, level.shape[-2:])
+            level[0,20] = scaled_mask[0, 20]*20
+            level[0,32] = scaled_mask[0, 32]*20
+            level[0,17] = scaled_mask[0, 17]*20
 
-#     levels = []
+            level = force_path(level)
 
+            return level
 
-#     for path in gen_paths:
-#         read_gen, noise_maps, reals, noise_amps = LevelGen.read_json(path)
+        levels = Parallel(n_jobs=4, backend='loky')(delayed(level_from_path)(path) for path in gen_paths)
 
-#         level = draw_concat(read_gen, noise_maps, reals, noise_amps, padding_func, padding_func , opt, scaler, in_s=masknp)
-
-#         scaled_mask = scaler(masknp, level.shape[-2:])
-#         level[0,20] = scaled_mask[0, 20]*20
-#         level[0,32] = scaled_mask[0, 32]*20
-#         level[0,17] = scaled_mask[0, 17]*20
-
-#         level = force_path(level)
+        enc_map = map_from_tensors(levels)
 
 
-#         levels.append(level)
-
-    enc_map = map_from_tensors(levels)
-    LevelEncoder.write_level(parsed.outpath, enc_map, exec_path='./utils/json2map.rb')
+        LevelEncoder.write_level(parsed.outpath, enc_map, exec_path=os.path.join(tempdir,
+                                                                                     'celeste',
+                                                                                     'celeste_level',
+                                                                                     'json2map.rb'))
 
 
 

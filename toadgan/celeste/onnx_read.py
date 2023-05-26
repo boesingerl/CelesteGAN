@@ -32,7 +32,10 @@ from contextlib import redirect_stdout
 from .celeste_level.attributes import map_from_tensors
 from .celeste_level.level import LevelEncoder, LevelRenderer
 
-from . import celeste_level
+import sys
+sys.path += ['..']
+
+import celeste
 from joblib import Parallel, delayed
 
 
@@ -49,7 +52,7 @@ class Upscaler:
     #     return np.stack([cv2.dilate(x, kernel, iterations=1) for x in img])
     
     def __init__(self, path='upscale.onnx'):
-        readbytes = importlib.resources.read_binary(celeste_level, path)
+        readbytes = importlib.resources.read_binary(celeste, path)
         self.sess = ort.InferenceSession(readbytes, providers=['CPUExecutionProvider'])
         
         self.kernel = np.ones((3, 3))*1.5

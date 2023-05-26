@@ -336,7 +336,7 @@ def main():
             masknp[0,20] = masknp[0,20]*2
             masknp[0,32] = masknp[0,32]*2
 
-        gen_paths = np.random.choice(glob(GENERATORS_PATH), size=parsed.levelsize)
+        gen_paths = np.random.choice(glob(os.path.join(tempdir, GENERATORS_PATH)), size=parsed.levelsize)
         opt = GenerateSamplesConfig()
 
         def level_from_path(path):

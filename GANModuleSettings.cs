@@ -45,14 +45,18 @@ namespace Celeste.Mod.GAN {
                                     sw.WriteLine("eval \"$(cat ~/.bashrc | tail -n +12)\"");
                                 }
 
-                                sw.WriteLine("conda activate gan");
-                                sw.WriteLine($"cd {Path.Combine("Mods", "celesteGan", "Code")}");
-                                sw.WriteLine($"python celeste.pyz {Path.Combine("data", "mask_small.json.gz")} {Path.Combine("data", "generators")} {Path.Combine("..", "Maps", "boesingerl", "celesteGAN", "GANMap.bin")}");
+                                sw.WriteLine("echo `pwd`");
+                                sw.WriteLine("conda activate minimal");
+                                sw.WriteLine($"cd {Path.Combine("Mods", "CelesteGAN", "Code")}");
+                                sw.WriteLine($"python celestegan.pyz {Path.Combine("..", "Maps", "boesingerl", "celesteGAN", "GANMap.bin")}");
                             }
                         }
 
                         string output = process.StandardOutput.ReadToEnd();
                         string err = process.StandardError.ReadToEnd();
+
+                        Logger.Log(LogLevel.Info, "GAN", output);
+                        Logger.Log(LogLevel.Info, "GAN", err);
 
                         process.WaitForExit();
                     }

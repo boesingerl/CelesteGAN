@@ -2,4 +2,5 @@ modoptions_ganmodule_title= AI Levels
 boesingerl_celesteGAN= AI Levels
 boesingerl_celesteGAN_GANMap= GAN Level
 boesingerl_celesteGAN_demo_level= Demo Level
-poem_ExampleName_ExampleMod_demo_level_A= Level finished !
+poem_boesingerl_celesteGAN_demo_level_A= Level finished !
+poem_boesingerl_celesteGAN_GANMap_A= Level finished !

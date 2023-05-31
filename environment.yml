@@ -1,0 +1,31 @@
+name: gan
+channels:
+  - conda-forge
+dependencies:
+  - python=3.8
+  - jupyter
+  - ca-certificates
+  - openssl
+  - cudatoolkit=10.2
+  - torchvision==0.6.1
+  - pygraphviz
+  - pip:
+      - jmespath==1.0.1
+      - joblib==1.2.0
+      - kornia==0.6.11
+      - loguru==0.6.0
+      - matplotlib==3.7.1
+      - networkx==3.0
+      - numpy==1.24.2
+      - onnxruntime==1.14.1
+      - opencv-python==4.7.0.72
+      - git+https://github.com/pvigier/perlin-numpy
+      - PyYAML==6.0
+      - scikit-image==0.20.0
+      - scipy==1.9.1
+      - torch==2.0.0
+      - torchvision==0.15.1
+      - tqdm==4.65.0
+      - typed-argument-parser==1.8.0
+      - wandb==0.14.0
+prefix: /home/leopaul/mambaforge/envs/gan

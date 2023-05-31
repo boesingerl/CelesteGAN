@@ -1,15 +1,14 @@
 # Contains code based on https://github.com/tamarott/SinGAN
 import os
+
 import torch
 
-from ..mario.tokens import TOKEN_GROUPS
-
-from .generator import Level_GeneratorConcatSkip2CleanAdd
 from .discriminator import Level_WDiscriminator
+from .generator import Level_GeneratorConcatSkip2CleanAdd
 
 
 def weights_init(m):
-    """ Init weights for Conv and Norm Layers. """
+    """Init weights for Conv and Norm Layers."""
     classname = m.__class__.__name__
     if classname.find("Conv2d") != -1:
         m.weight.data.normal_(0.0, 0.02)
@@ -19,7 +18,7 @@ def weights_init(m):
 
 
 def init_models(opt):
-    """ Initialize Generator and Discriminator. """
+    """Initialize Generator and Discriminator."""
     # generator initialization:
     G = Level_GeneratorConcatSkip2CleanAdd(opt).to(opt.device)
     G.apply(weights_init)
@@ -81,24 +80,42 @@ def restore_weights(D_curr, G_curr, scale_num, opt):
     for i, token in enumerate(opt.token_list):
         for group_idx, group in enumerate(TOKEN_GROUPS):
             if token in group:
-                G_state_dict["head.conv.weight"][:, i] = G_head_conv_weight[:, group_idx]
+                G_state_dict["head.conv.weight"][:, i] = G_head_conv_weight[
+                    :, group_idx
+                ]
                 G_state_dict["tail.0.weight"][i] = G_tail_weight[group_idx]
                 G_state_dict["tail.0.bias"][i] = G_tail_bias[group_idx]
-                D_state_dict["head.conv.weight"][:, i] = D_head_conv_weight[:, group_idx]
+                D_state_dict["head.conv.weight"][:, i] = D_head_conv_weight[
+                    :, group_idx
+                ]
                 break
 
-    G_state_dict["head.conv.weight"] = (G_state_dict["head.conv.weight"].detach().requires_grad_())
-    G_state_dict["tail.0.weight"] = (G_state_dict["tail.0.weight"].detach().requires_grad_())
+    G_state_dict["head.conv.weight"] = (
+        G_state_dict["head.conv.weight"].detach().requires_grad_()
+    )
+    G_state_dict["tail.0.weight"] = (
+        G_state_dict["tail.0.weight"].detach().requires_grad_()
+    )
     G_state_dict["tail.0.bias"] = G_state_dict["tail.0.bias"].detach().requires_grad_()
-    D_state_dict["head.conv.weight"] = (D_state_dict["head.conv.weight"].detach().requires_grad_())
+    D_state_dict["head.conv.weight"] = (
+        D_state_dict["head.conv.weight"].detach().requires_grad_()
+    )
 
     G_curr.load_state_dict(G_state_dict)
     D_curr.load_state_dict(D_state_dict)
 
-    G_curr.head.conv.weight = torch.nn.Parameter(G_curr.head.conv.weight.detach().requires_grad_())
-    G_curr.tail[0].weight = torch.nn.Parameter(G_curr.tail[0].weight.detach().requires_grad_())
-    G_curr.tail[0].bias = torch.nn.Parameter(G_curr.tail[0].bias.detach().requires_grad_())
-    D_curr.head.conv.weight = torch.nn.Parameter(D_curr.head.conv.weight.detach().requires_grad_())
+    G_curr.head.conv.weight = torch.nn.Parameter(
+        G_curr.head.conv.weight.detach().requires_grad_()
+    )
+    G_curr.tail[0].weight = torch.nn.Parameter(
+        G_curr.tail[0].weight.detach().requires_grad_()
+    )
+    G_curr.tail[0].bias = torch.nn.Parameter(
+        G_curr.tail[0].bias.detach().requires_grad_()
+    )
+    D_curr.head.conv.weight = torch.nn.Parameter(
+        D_curr.head.conv.weight.detach().requires_grad_()
+    )
 
     return D_curr, G_curr
 
@@ -111,12 +128,12 @@ def reset_grads(model, require_grad):
 
 def load_trained_pyramid(opt):
     dir = opt.out_
-    if(os.path.exists(dir)):
-        reals = torch.load('%s/reals.pth' % dir)
-        Gs = torch.load('%s/generators.pth' % dir)
-        Zs = torch.load('%s/noise_maps.pth' % dir)
-        NoiseAmp = torch.load('%s/noise_amplitudes.pth' % dir)
+    if os.path.exists(dir):
+        reals = torch.load("%s/reals.pth" % dir)
+        Gs = torch.load("%s/generators.pth" % dir)
+        Zs = torch.load("%s/noise_maps.pth" % dir)
+        NoiseAmp = torch.load("%s/noise_amplitudes.pth" % dir)
 
     else:
-        print('no appropriate trained model exists, please train first')
-    return Gs,Zs,reals,NoiseAmp
+        print("no appropriate trained model exists, please train first")
+    return Gs, Zs, reals, NoiseAmp

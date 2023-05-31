@@ -1,30 +1,22 @@
 # Code based on https://github.com/tamarott/SinGAN
-import argparse
 import random
-from typing import List, Literal, Optional, Union
+from typing import Any, List, Literal, Optional
 
-import numpy as np
 import torch
-from torch import cuda
 from tap import Tap
-import typing
-from .utils import set_seed
-from .mariokart.level_image_gen import LevelImageGen as MariokartLevelGen
-from .zelda.level_image_gen import LevelImageGen as ZeldaLevelGen
-from .mario.level_image_gen import LevelImageGen as MarioLevelGen
-from .megaman.level_image_gen import LevelImageGen as MegamanLevelGen
+from torch import cuda
 
-import ast
+from .utils import set_seed
+
 
 class Config(Tap):
-    game: Literal["mario", "mariokart", "megaman",
-                  "zelda", "celeste"] = "mario"  # Which game is to be used?
+    game: Literal["celeste"] = "celeste"  # Which game is to be used?
     not_cuda: bool = False  # disables cuda
     netG: str = ""  # path to netG (to continue training)
     netD: str = ""  # path to netD (to continue training)
     manualSeed: Optional[int] = None
     out: str = "output"  # output directory
-    input_dir: str = "input/mario"  # input directory
+    input_dir: str = "input/celeste"  # input directory
     input_name: str = "lvl_1-1.txt"  # input level filename
     # input level names (if multiple inputs are used)
     input_names: List[str] = ["lvl_1-1.txt", "lvl_1-2.txt"]
@@ -48,14 +40,27 @@ class Config(Tap):
     alpha: int = 100  # reconstruction loss weight
     # layer in which token groupings will be split out (<-2 means no grouping at all)
     token_insert: int = -2
-    token_list: List[str] = ['!', '#', '-', '1', '@', 'C', 'S',
-                             'U', 'X', 'g', 'k', 't']  # default list of 1-1
+    token_list: List[str] = [
+        "!",
+        "#",
+        "-",
+        "1",
+        "@",
+        "C",
+        "S",
+        "U",
+        "X",
+        "g",
+        "k",
+        "t",
+    ]  # default list of 1-1
 
     def process_args(self):
         self.device = torch.device("cpu" if self.not_cuda else "cuda:0")
         if cuda.is_available() and self.not_cuda:
             print(
-                "WARNING: You have a CUDA device, so you should probably run with --cuda")
+                "WARNING: You have a CUDA device, so you should probably run with --cuda"
+            )
 
         if self.manualSeed is None:
             self.manualSeed = random.randint(1, 10000)
@@ -72,13 +77,12 @@ class Config(Tap):
         self.seed_road = None  # for mario kart seed roads after training
         # which scale to stop on - usually always last scale defined
         self.stop_scale = self.num_scales
-        self.ImgGen: Union[MarioLevelGen, ZeldaLevelGen,
-                           MegamanLevelGen, MariokartLevelGen] = MarioLevelGen(self.game + "/sprites") if self.game in ["mario", "mariokart", "megaman",
-                  "zelda"] else None
+        self.ImgGen: Any = None
+
 
 # @torch.jit.script
 # class ConfigTorch:
-    
+
 #     __constants__ = ['game',
 #                      'not_cuda',
 #                      'netG']
@@ -117,10 +121,10 @@ class Config(Tap):
 #         self.log_all: bool = False
 #         self.token_list: List[str] = ['!', '#', '-', '1', '@', 'C', 'S',
 #                                  'U', 'X', 'g', 'k', 't']  # default list of 1-1
-        
+
 #         self.device = torch.device("cpu" if self.not_cuda else "cuda:0")
 #         self.manualSeed : int = 0
-        
+
 #         # set_seed(self.manualSeed)
 
 #         # Defaults for other namespace values that will be overwritten during runtime
@@ -135,7 +139,7 @@ class Config(Tap):
 #         # which scale to stop on - usually always last scale defined
 #         self.stop_scale = self.num_scales
 #         self.ImgGen: None = None
-        
+
 #     def __getstate__(self):
 #         return {
 #         'game': self.game,
@@ -182,10 +186,10 @@ class Config(Tap):
 #                      d # type: Dict[str, Union[str, List[str]]]
 #                     ):
 #         # type: (...) -> None
-        
+
 #         game: str = typing.cast(str, d['game'])# type: str
 #         self.game = game
-        
+
 #         self.not_cuda = d['not_cuda'] # type: bool
 #         self.netG = str(d['netG'])
 #         self.netD = str(d['netD'])
@@ -223,7 +227,3 @@ class Config(Tap):
 #         self.seed_road = d['seed_road']
 #         self.stop_scale = d['stop_scale']
 #         self.ImgGen = d['ImgGen']
-
-
-
-

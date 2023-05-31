@@ -1,44 +1,40 @@
-from typing import Optional
-
-import yaml
-from .config import Config
 import os
-from shutil import copyfile
-from argparse import Namespace
+from typing import List, Optional
+
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
+from loguru import logger
 from torch.nn.functional import interpolate
 from tqdm.auto import tqdm
-from loguru import logger
-import matplotlib.pyplot as plt
+
+from .celeste.image import one_hot_to_image, upscale
+from .config import Config
+# from .mario.level_utils import one_hot_to_ascii_level, group_to_token, token_to_group, read_level, read_level_from_file, place_a_mario_token
+# from .mario.special_mario_downsampling import special_mario_downsampling
+# from .mario.level_image_gen import LevelImageGen as MarioLevelGen
+# from .zelda.special_zelda_downsampling import special_zelda_downsampling
+# from .zelda.level_image_gen import LevelImageGen as ZeldaLevelGen
+# from .megaman.special_megaman_downsampling import special_megaman_downsampling
+# from .megaman.level_image_gen import LevelImageGen as MegamanLevelGen
+# from .mariokart.special_mariokart_downsampling import special_mariokart_downsampling
+# from .mariokart.level_image_gen import LevelImageGen as MariokartLevelGen
+# from .mario.tokens import REPLACE_TOKENS as MARIO_REPLACE_TOKENS
+# from .megaman.tokens import REPLACE_TOKENS as MEGAMAN_REPLACE_TOKENS
+# from .mariokart.tokens import REPLACE_TOKENS as MARIOKART_REPLACE_TOKENS
+# from .mario.tokens import TOKEN_GROUPS as MARIO_TOKEN_GROUPS
+# from .zelda.tokens import TOKEN_GROUPS as ZELDA_TOKEN_GROUPS
+# from .megaman.tokens import TOKEN_GROUPS as MEGAMAN_TOKEN_GROUPS
+# from .mariokart.tokens import TOKEN_GROUPS as MARIOKART_TOKEN_GROUPS
+# from .mario.special_mario_downsampling import special_mario_downsampling
+from .generate_noise import generate_spatial_noise
+from .models.generator import Level_GeneratorConcatSkip2CleanAdd
 
 # sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), ".."))  # uncomment if opening form other dir
 
-from .mario.level_utils import one_hot_to_ascii_level, group_to_token, token_to_group, read_level, read_level_from_file, place_a_mario_token
-from .mario.special_mario_downsampling import special_mario_downsampling
-from .mario.level_image_gen import LevelImageGen as MarioLevelGen
-from .zelda.special_zelda_downsampling import special_zelda_downsampling
-from .zelda.level_image_gen import LevelImageGen as ZeldaLevelGen
-from .megaman.special_megaman_downsampling import special_megaman_downsampling
-from .megaman.level_image_gen import LevelImageGen as MegamanLevelGen
-from .mariokart.special_mariokart_downsampling import special_mariokart_downsampling
-from .mariokart.level_image_gen import LevelImageGen as MariokartLevelGen
-from .mario.tokens import REPLACE_TOKENS as MARIO_REPLACE_TOKENS
-from .megaman.tokens import REPLACE_TOKENS as MEGAMAN_REPLACE_TOKENS
-from .mariokart.tokens import REPLACE_TOKENS as MARIOKART_REPLACE_TOKENS
-from .mario.tokens import TOKEN_GROUPS as MARIO_TOKEN_GROUPS
-from .zelda.tokens import TOKEN_GROUPS as ZELDA_TOKEN_GROUPS
-from .megaman.tokens import TOKEN_GROUPS as MEGAMAN_TOKEN_GROUPS
-from .mariokart.tokens import TOKEN_GROUPS as MARIOKART_TOKEN_GROUPS
-from .mario.special_mario_downsampling import special_mario_downsampling
-from .generate_noise import generate_spatial_noise
-from .models import load_trained_pyramid
-from .celeste.image import one_hot_to_image, upscale
-from .celeste.downsampling import celeste_downsampling
 
-from .models.generator import Level_GeneratorConcatSkip2CleanAdd
 
-from typing import List, Any
+
 
 def identity(x):
     return x
@@ -65,27 +61,43 @@ class GenerateSamplesConfig(Config):
         self.seed_road = None
         if (not self.out_) and (not self.make_mario_samples):
             raise Exception(
-                '--out_ is required (--make_mario_samples experiment is the exception)')
+                "--out_ is required (--make_mario_samples experiment is the exception)"
+            )
 
-            
-opt = Config().parse_args("--input_dir input --input_name celeste_2x.txt "
-                           "--num_layer 4 --alpha 100 --niter 1500 --nfc 64 --game celeste".split())
+
+opt = Config().parse_args(
+    "--input_dir input --input_name celeste_2x.txt "
+    "--num_layer 4 --alpha 100 --niter 1500 --nfc 64 --game celeste".split()
+)
 
 test: Level_GeneratorConcatSkip2CleanAdd = Level_GeneratorConcatSkip2CleanAdd(opt)
 
+
 class Padder:
-    
     def __init__(self, padsize: int):
-        self.padsize  = padsize
-        
+        self.padsize = padsize
+
     def __call__(self, image):
         l: List[int] = [self.padsize, self.padsize, self.padsize, self.padsize]
         return torch.nn.functional.pad(image, l)
 
 
-def generate_samples(generators, noise_maps, reals, noise_amplitudes, opt: GenerateSamplesConfig, in_s=None, scale_v=1.0, scale_h=1.0,
-                     current_scale=0, gen_start_scale=0, num_samples=50, render_images=True, save_tensors=False,
-                     save_dir="random_samples"):
+def generate_samples(
+    generators,
+    noise_maps,
+    reals,
+    noise_amplitudes,
+    opt: GenerateSamplesConfig,
+    in_s=None,
+    scale_v=1.0,
+    scale_h=1.0,
+    current_scale=0,
+    gen_start_scale=0,
+    num_samples=50,
+    render_images=True,
+    save_tensors=False,
+    save_dir="random_samples",
+):
     """
     Generate samples given a pretrained TOAD-GAN (generators, noise_maps, reals, noise_amplitudes).
     Uses namespace "opt" that needs to be parsed.
@@ -101,30 +113,33 @@ def generate_samples(generators, noise_maps, reals, noise_amplitudes, opt: Gener
     images_cur = []
 
     # Check which game we are using for token groups
-    if opt.game == 'mario':
-        token_groups = MARIO_TOKEN_GROUPS
-    elif opt.game == 'zelda':
-        token_groups = ZELDA_TOKEN_GROUPS
-    elif opt.game == 'megaman':
-        token_groups = MEGAMAN_TOKEN_GROUPS
-    elif opt.game == 'mariokart':
-        token_groups = MARIOKART_TOKEN_GROUPS
-    else:
-        token_groups = []
-        NameError(
-            "name of --game not recognized. Supported: mario, zelda, megaman, mariokart")
+    token_groups = []
 
-    if hasattr(opt, 'log_progress') and opt.log_progress:
+    # if opt.game == 'mario':
+    #     token_groups = MARIO_TOKEN_GROUPS
+    # elif opt.game == 'zelda':
+    #     token_groups = ZELDA_TOKEN_GROUPS
+    # elif opt.game == 'megaman':
+    #     token_groups = MEGAMAN_TOKEN_GROUPS
+    # elif opt.game == 'mariokart':
+    #     token_groups = MARIOKART_TOKEN_GROUPS
+    # else:
+    #     token_groups = []
+    #     NameError(
+    #         "name of --game not recognized. Supported: mario, zelda, megaman, mariokart")
+
+    if hasattr(opt, "log_progress") and opt.log_progress:
         tqdm_wrap = tqdm
     else:
         tqdm_wrap = lambda x: x
-        
+
     final_tensors = []
     # Main sampling loop
-    for sc, (G, Z_opt, noise_amp) in enumerate(zip(generators, noise_maps, noise_amplitudes)):
-
+    for sc, (G, Z_opt, noise_amp) in enumerate(
+        zip(generators, noise_maps, noise_amplitudes)
+    ):
         # Make directories
-        dir2save = opt.out_ + '/' + save_dir
+        dir2save = opt.out_ + "/" + save_dir
         try:
             os.makedirs(dir2save, exist_ok=True)
             if render_images:
@@ -139,34 +154,39 @@ def generate_samples(generators, noise_maps, reals, noise_amplitudes, opt: Gener
             break  # if we do not start at current_scale=0 we need this
         elif sc < current_scale:
             if opt.token_insert >= 0:
-                # Convert to ascii level
-                token_list = [list(group.keys())[0] for group in token_groups]
-                level = one_hot_to_ascii_level(
-                    in_s[0].detach().unsqueeze(0), token_list)
+                raise DeprecationWarning("No longer using ascii level")
+                # # Convert to ascii level
+                # token_list = [list(group.keys())[0] for group in token_groups]
+                # level = one_hot_to_ascii_level(
+                #     in_s[0].detach().unsqueeze(0), token_list)
 
-                # Render and save level image
-                if render_images:
-                    img = opt.ImgGen.render(level)
-                    img.save("%s/img/%d_sc%d.png" %
-                             (dir2save, opt.token_insert, current_scale))
+                # # Render and save level image
+                # if render_images:
+                #     img = opt.ImgGen.render(level)
+                #     img.save("%s/img/%d_sc%d.png" %
+                #              (dir2save, opt.token_insert, current_scale))
             continue
 
-        if hasattr(opt, 'log_progress') and opt.log_progress:
+        if hasattr(opt, "log_progress") and opt.log_progress:
             logger.info("Generating samples at scale {}", current_scale)
 
         # Padding (should be chosen according to what was trained with)
-        n_pad = int(1*opt.num_layer)
+        n_pad = int(1 * opt.num_layer)
         if not opt.pad_with_noise:
             m = nn.ZeroPad2d(int(n_pad))  # pad with zeros
         else:
             m = nn.ReflectionPad2d(int(n_pad))  # pad with reflected noise
 
         # Calculate shapes to generate
-        if 0 < gen_start_scale <= current_scale:  # Special case! Can have a wildly different shape through in_s
-            scale_v = in_s.shape[-2] / \
-                (noise_maps[gen_start_scale-1].shape[-2] - n_pad * 2)
-            scale_h = in_s.shape[-1] / \
-                (noise_maps[gen_start_scale-1].shape[-1] - n_pad * 2)
+        if (
+            0 < gen_start_scale <= current_scale
+        ):  # Special case! Can have a wildly different shape through in_s
+            scale_v = in_s.shape[-2] / (
+                noise_maps[gen_start_scale - 1].shape[-2] - n_pad * 2
+            )
+            scale_h = in_s.shape[-1] / (
+                noise_maps[gen_start_scale - 1].shape[-1] - n_pad * 2
+            )
             nzx = (Z_opt.shape[-2] - n_pad * 2) * scale_v
             nzy = (Z_opt.shape[-1] - n_pad * 2) * scale_h
         else:
@@ -181,56 +201,69 @@ def generate_samples(generators, noise_maps, reals, noise_amplitudes, opt: Gener
         if current_scale < (opt.token_insert + 1):
             channels = len(token_groups)
             if in_s is not None and in_s.shape[1] != channels:
-                old_in_s = in_s
-                in_s = token_to_group(in_s, opt.token_list, token_groups)
+                raise DeprecationWarning("Not using token insertion")
+                # old_in_s = in_s
+                # in_s = token_to_group(in_s, opt.token_list, token_groups)
         else:
             channels = len(opt.token_list)
             if in_s is not None and in_s.shape[1] != channels:
-                old_in_s = in_s
-                in_s = group_to_token(in_s, opt.token_list, token_groups)
+                raise DeprecationWarning("Not using token insertion")
+
+                # old_in_s = in_s
+                # in_s = group_to_token(in_s, opt.token_list, token_groups)
 
         # If in_s is none or filled with zeros reshape to correct size with channels
         if in_s is None:
-            in_s = torch.zeros(reals[0].shape[0], channels,
-                               *reals[0].shape[2:]).to(opt.device)
+            in_s = torch.zeros(reals[0].shape[0], channels, *reals[0].shape[2:]).to(
+                opt.device
+            )
         elif in_s.sum() == 0:
             in_s = torch.zeros(1, channels, *in_s.shape[-2:]).to(opt.device)
 
         # Generate num_samples samples in current scale
         for n in tqdm_wrap(range(0, num_samples, 1)):
-
             # Get noise image
             z_curr = generate_spatial_noise(
-                [1, channels, int(round(nzx)), int(round(nzy))], device=opt.device)
+                [1, channels, int(round(nzx)), int(round(nzy))], device=opt.device
+            )
             z_curr = m(z_curr)
 
             # Set up previous image I_prev
-            if (not images_prev) or current_scale == 0:  # if there is no "previous" image
+            if (
+                not images_prev
+            ) or current_scale == 0:  # if there is no "previous" image
                 I_prev = in_s
             else:
-
                 I_prev = images_prev[n]
 
                 # Transform to token groups if there is token insertion
                 if current_scale == (opt.token_insert + 1):
-                    I_prev = group_to_token(
-                        I_prev, opt.token_list, token_groups)
+                    raise DeprecationWarning("Not using token insertion")
 
-            
-            if opt.game != 'celeste':
-                I_prev = interpolate(I_prev, [int(round(nzx)), int(
-                    round(nzy))], mode='bilinear', align_corners=False)
+                    # I_prev = group_to_token(
+                    #     I_prev, opt.token_list, token_groups)
+
+            if opt.game != "celeste":
+                I_prev = interpolate(
+                    I_prev,
+                    [int(round(nzx)), int(round(nzy))],
+                    mode="bilinear",
+                    align_corners=False,
+                )
             else:
-                
                 if sc == 0:
                     I_prev = upscale(I_prev, [int(round(nzx)), int(round(nzy))])
-    
+
                 else:
                     I_prev = upscale(I_prev, [int(round(nzx)), int(round(nzy))])
-                
-                    if hasattr(opt, 'log_all') and opt.log_all and hasattr(opt, 'log_interp'):
+
+                    if (
+                        hasattr(opt, "log_all")
+                        and opt.log_all
+                        and hasattr(opt, "log_interp")
+                    ):
                         opt.log_interp.append(one_hot_to_image(I_prev))
-                
+
             I_prev = m(I_prev)
 
             # We take the optimized noise map Z_opt as an input if we start generating on later scales
@@ -247,29 +280,32 @@ def generate_samples(generators, noise_maps, reals, noise_amplitudes, opt: Gener
             # Generate!
             ###########
             z_in = noise_amp * z_curr + I_prev
-            if hasattr(opt, 'log_all') and opt.log_all and hasattr(opt, 'log_noise'):
+            if hasattr(opt, "log_all") and opt.log_all and hasattr(opt, "log_noise"):
                 opt.log_noise.append(one_hot_to_image(z_in))
             I_curr = G(z_in.detach(), I_prev, temperature=1)
-            
-            if hasattr(opt, 'log_all') and opt.log_all and hasattr(opt, 'log_out'):
+
+            if hasattr(opt, "log_all") and opt.log_all and hasattr(opt, "log_out"):
                 opt.log_out.append(one_hot_to_image(I_curr))
 
             # Allow road insertion in mario kart levels
-            if opt.game == 'mariokart':
+            if opt.game == "mariokart":
                 if current_scale == 0 and opt.seed_road is not None:
                     for token in token_list:
-                        if token == 'R':  # Road map!
+                        if token == "R":  # Road map!
                             tmp = opt.seed_road.clone().to(opt.device)
                             I_curr[0, token_list.index(token)] = tmp
 
                         # Tokens that can only appear on roads
-                        elif token in ['O', 'Q', 'C', '<']:
-                            I_curr[0, token_list.index(
-                                token)] *= opt.seed_road.to(opt.device)
+                        elif token in ["O", "Q", "C", "<"]:
+                            I_curr[0, token_list.index(token)] *= opt.seed_road.to(
+                                opt.device
+                            )
 
                         else:  # Other tokens like walls
-                            I_curr[0, token_list.index(token)] = torch.min(I_curr[0, token_list.index(token)],
-                                                                           1 - opt.seed_road.to(opt.device))
+                            I_curr[0, token_list.index(token)] = torch.min(
+                                I_curr[0, token_list.index(token)],
+                                1 - opt.seed_road.to(opt.device),
+                            )
 
             # Save all scales
 
@@ -278,31 +314,32 @@ def generate_samples(generators, noise_maps, reals, noise_amplitudes, opt: Gener
             # if current_scale == 0 or current_scale == len(reals) - 1:
             # Save only last scale
             if current_scale == len(reals) - 1:
-
-                if opt.game == 'celeste':
-
+                if opt.game == "celeste":
                     level = one_hot_to_image(I_curr.detach())
-                    plt.imsave("%s/img/%d_sc%d.png" % (dir2save, n, current_scale), level)
+                    plt.imsave(
+                        "%s/img/%d_sc%d.png" % (dir2save, n, current_scale), level
+                    )
                     final_tensors.append(I_curr.detach())
-                   
+
                 else:
-                    # Convert to ascii level
-                    level = one_hot_to_ascii_level(I_curr.detach(), token_list)
+                    raise DeprecationWarning("Celeste only supported")
+                    # # Convert to ascii level
+                    # level = one_hot_to_ascii_level(I_curr.detach(), token_list)
 
-                    # Render and save level image
-                    if render_images:
-                        img = opt.ImgGen.render(level)
-                        img.save("%s/img/%d_sc%d.png" %
-                                 (dir2save, n, current_scale))
+                    # # Render and save level image
+                    # if render_images:
+                    #     img = opt.ImgGen.render(level)
+                    #     img.save("%s/img/%d_sc%d.png" %
+                    #              (dir2save, n, current_scale))
 
-                    # Save level txt
-                    with open("%s/txt/%d_sc%d.txt" % (dir2save, n, current_scale), "w") as f:
-                        f.writelines(level)
+                    # # Save level txt
+                    # with open("%s/txt/%d_sc%d.txt" % (dir2save, n, current_scale), "w") as f:
+                    #     f.writelines(level)
 
-                    # Save torch tensor
-                    if save_tensors:
-                        torch.save(I_curr, "%s/torch/%d_sc%d.pt" %
-                                   (dir2save, n, current_scale))
+                    # # Save torch tensor
+                    # if save_tensors:
+                    #     torch.save(I_curr, "%s/torch/%d_sc%d.pt" %
+                    #                (dir2save, n, current_scale))
 
             # Token insertion render (experimental!)
             # if current_scale == opt.token_insert:
@@ -323,66 +360,66 @@ def generate_samples(generators, noise_maps, reals, noise_amplitudes, opt: Gener
     return final_tensors
 
 
-def generate_mario_samples(opt: GenerateSamplesConfig):
+# def generate_mario_samples(opt: GenerateSamplesConfig):
 
-    # Generate many samples for all mario levels for large scale evaluation
-    level_names = [f for f in sorted(os.listdir(
-        opt.input_dir)) if f.endswith('.txt')]
+#     # Generate many samples for all mario levels for large scale evaluation
+#     level_names = [f for f in sorted(os.listdir(
+#         opt.input_dir)) if f.endswith('.txt')]
 
-    generator_dirs = {}
-    for generator_dir in os.listdir(opt.generators_dir):
-        run_dir = os.path.join(opt.generators_dir, generator_dir)
-        with open(os.path.join(run_dir, "files", "config.yaml"), "r") as f:
-            config = yaml.load(f)
-        level_name = config["input_name"]["value"]
-        generator_dirs[level_name] = os.path.join(run_dir, "files")
+#     generator_dirs = {}
+#     for generator_dir in os.listdir(opt.generators_dir):
+#         run_dir = os.path.join(opt.generators_dir, generator_dir)
+#         with open(os.path.join(run_dir, "files", "config.yaml"), "r") as f:
+#             config = yaml.load(f)
+#         level_name = config["input_name"]["value"]
+#         generator_dirs[level_name] = os.path.join(run_dir, "files")
 
-    for level_name in level_names:
-        # New "input" mario level
-        opt.input_name = level_name
-        opt.out_ = generator_dirs[level_name]
+#     for level_name in level_names:
+#         # New "input" mario level
+#         opt.input_name = level_name
+#         opt.out_ = generator_dirs[level_name]
 
-        # Read level according to input arguments
-        real_m = read_level(opt, None, MARIO_REPLACE_TOKENS).to(opt.device)
+#         # Read level according to input arguments
+#         real_m = read_level(opt, None, MARIO_REPLACE_TOKENS).to(opt.device)
 
-        # Load TOAD-GAN for current level
-        generators_m, noise_maps_m, reals_m, noise_amplitudes_m = load_trained_pyramid(
-            opt)
+#         # Load TOAD-GAN for current level
+#         generators_m, noise_maps_m, reals_m, noise_amplitudes_m = load_trained_pyramid(
+#             opt)
 
-        # Set in_s and scales
-        if opt.gen_start_scale == 0:  # starting in lowest scale
-            in_s_m = None
-            m_scale_v = 1.0
-            # normalize all levels to length 16x200
-            m_scale_h = 200 / real_m.shape[-1]
-        else:  # if opt.gen_start_scale > 0
-            # Only works with default level size if no in_s is provided (should not be reached)
-            in_s_m = reals_m[opt.gen_start_scale]
-            m_scale_v = 1.0
-            m_scale_h = 1.0
+#         # Set in_s and scales
+#         if opt.gen_start_scale == 0:  # starting in lowest scale
+#             in_s_m = None
+#             m_scale_v = 1.0
+#             # normalize all levels to length 16x200
+#             m_scale_h = 200 / real_m.shape[-1]
+#         else:  # if opt.gen_start_scale > 0
+#             # Only works with default level size if no in_s is provided (should not be reached)
+#             in_s_m = reals_m[opt.gen_start_scale]
+#             m_scale_v = 1.0
+#             m_scale_h = 1.0
 
-        # Prefix for folder structure
-        prefix_m = 'arbitrary'
+#         # Prefix for folder structure
+#         prefix_m = 'arbitrary'
 
-        # Define directory
-        s_dir_name_m = "%s_random_samples_v%.5f_h%.5f_start%d" % (
-            prefix_m, m_scale_v, m_scale_h, opt.gen_start_scale)
+#         # Define directory
+#         s_dir_name_m = "%s_random_samples_v%.5f_h%.5f_start%d" % (
+#             prefix_m, m_scale_v, m_scale_h, opt.gen_start_scale)
 
-        # Generate samples
-        generate_samples(generators_m, noise_maps_m, reals_m, noise_amplitudes_m, opt, in_s=in_s_m,
-                         scale_v=m_scale_v, scale_h=m_scale_h, current_scale=opt.gen_start_scale,
-                         gen_start_scale=opt.gen_start_scale, num_samples=1000, render_images=False,
-                         save_tensors=False, save_dir=s_dir_name_m)
+#         # Generate samples
+#         generate_samples(generators_m, noise_maps_m, reals_m, noise_amplitudes_m, opt, in_s=in_s_m,
+#                          scale_v=m_scale_v, scale_h=m_scale_h, current_scale=opt.gen_start_scale,
+#                          gen_start_scale=opt.gen_start_scale, num_samples=1000, render_images=False,
+#                          save_tensors=False, save_dir=s_dir_name_m)
 
-        # For embedding experiment, copy levels to easy access folder
-        samples_dir = opt.out_ + '/' + s_dir_name_m + '/txt'
-        newpath = os.path.join(
-            opt.generators_dir, "samples", opt.input_name[:-4])
-        os.makedirs(newpath, exist_ok=True)
-        for f in tqdm_wrap(os.listdir(samples_dir)):
-            if f.endswith('.txt'):
-                copyfile(os.path.join(samples_dir, f),
-                         os.path.join(newpath, f))
+#         # For embedding experiment, copy levels to easy access folder
+#         samples_dir = opt.out_ + '/' + s_dir_name_m + '/txt'
+#         newpath = os.path.join(
+#             opt.generators_dir, "samples", opt.input_name[:-4])
+#         os.makedirs(newpath, exist_ok=True)
+#         for f in tqdm_wrap(os.listdir(samples_dir)):
+#             if f.endswith('.txt'):
+#                 copyfile(os.path.join(samples_dir, f),
+#                          os.path.join(newpath, f))
 
 
 # if __name__ == '__main__':

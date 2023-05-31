@@ -37,7 +37,6 @@ from glob import glob
 from torch.nn.functional import interpolate
 from torch.nn import Softmax
 
-from toadgan.main import get_tags
 from toadgan.celeste.downsampling import celeste_downsampling
 from toadgan.celeste.image import color_to_idx, one_hot_to_image
 from toadgan.models import init_models, reset_grads, restore_weights
@@ -95,7 +94,11 @@ for ordinal in imgs:
 ## Train one SinGan instance per level
 
 ```python
-for i, reals in enumerate(tqdm(multiple_reals[:5])):
+def get_tags(opt):
+    """ Get Tags for logging from input name. Helpful for wandb. """
+    return [opt.input_name.split(".")[0]]
+
+for i, reals in enumerate(tqdm(multiple_reals[20:25])):
     
     run = wandb.init(project="celeste_redo", tags=get_tags(opt),
                  config=opt, dir=opt.out)
@@ -111,7 +114,7 @@ for i, reals in enumerate(tqdm(multiple_reals[:5])):
 
     wandb.log({f"real{i}": wandb.Image(one_hot_to_image(reals[-1]))}, commit=False)
     
-    lvlname = f'data/may24/lvl_{i:03d}'
+    lvlname = f'data/may30/lvl_{i:03d}'
     # Training Loop
     for current_scale in range(0, stop_scale):
         
@@ -416,6 +419,25 @@ def force_path(sample):
         
     return sample
 ```
+
+## Create gen
+
+```python
+from itertools import chain
+from toadgan.celeste.onnx_read import LevelGen
+```
+
+```python
+for i, path in enumerate(sorted(chain(glob('data/may24/lvl_*/fulldict.pth'),glob('data/may30/lvl_*/fulldict.pth')))):
+    
+    dic = torch.load(path, map_location='cpu') 
+    
+    gentest = LevelGen(dic['generators'], dic['noise_maps'], dic['reals'], dic['noise_amplitudes'])    
+    
+    gentest.to_json(f'data/generators/{i:03d}.json.gz')  
+```
+
+## Plot
 
 ```python
 

@@ -22,7 +22,7 @@ from contextlib import redirect_stdout
 from dataclasses import dataclass
 from glob import glob
 from typing import Optional
-
+from collections import defaultdict
 
 import networkx as nx
 import numpy as np
@@ -38,7 +38,7 @@ from .celeste_level.level import LevelEncoder, LevelRenderer
 ARCHIVE_NAME = "celestegan.pyz"
 MASK_PATH = os.path.join("data", "mask_small.json.gz")
 GENERATORS_PATH = os.path.join("data", "generators", "*.json.gz")
-
+UPSCALE_MODEL_PATH = os.path.join("data", "upscale.onnx")
 
 # In[32]:
 
@@ -47,14 +47,11 @@ class Upscaler:
     # def dilate(img, kernel):
     #     return np.stack([cv2.dilate(x, kernel, iterations=1) for x in img])
 
-    def __init__(self, path="upscale.onnx"):
+    def __init__(self, path="data/upscale.onnx"):
         
-        # isort: off
-        sys.path += [".."]
-        import celeste
-        # isort: on
+        with open(path, 'rb') as handle:
+            readbytes = handle.read()
         
-        readbytes = importlib.resources.read_binary(celeste, path)
         self.sess = ort.InferenceSession(readbytes, providers=["CPUExecutionProvider"])
 
         self.kernel = np.ones((3, 3)) * 1.5
@@ -155,6 +152,9 @@ class LevelGen:
 
         self.bytes = []
         for generator, noise_map in zip(generators, noise_maps):
+
+            generator.eval()
+            
             bytio = io.BytesIO()
 
             with redirect_stdout(None):
@@ -333,6 +333,7 @@ def force_path(sample):
         "bounceBlock",
         "bigSpinner",
         "coverupWall",
+        "crumbleBlock",
         "crushBlock",
         "dashBlock",
         "fallingBlock",
@@ -368,7 +369,27 @@ def force_path(sample):
         set_path(sample, p)
 
     return sample
+    
+def add_jumpthru(forced_path):
+    forced_path = forced_path.copy()
+    
+    xs_play, ys_play = (forced_path[0].argmax(0) == LevelRenderer.ID_MAP['player']).T.nonzero()
+    xs_fin, ys_fin = (forced_path[0].argmax(0) == LevelRenderer.ID_MAP['finish']).T.nonzero()
 
+    biggest_y = defaultdict(lambda: 0)
+    
+    for x,y in zip(list(xs_play) + list(xs_fin), list(ys_play) + list(ys_fin)):
+        if y > biggest_y[x]:
+            biggest_y[x] = y
+
+    for x,y in biggest_y.items():
+        try:
+            if forced_path[0].argmax(0)[y+1,x] != 1:
+                forced_path[0,LevelRenderer.ID_MAP['jumpThru'], y+1,x] = 10
+        except Exception as e:
+            pass
+
+    return forced_path
 
 # In[44]:
 def main():
@@ -398,7 +419,7 @@ def main():
         opt = GenerateSamplesConfig()
 
         def level_from_path(path):
-            scaler = Upscaler()
+            scaler = Upscaler(os.path.join(tempdir, UPSCALE_MODEL_PATH))
 
             read_gen, noise_maps, reals, noise_amps = LevelGen.read_json(path)
 
@@ -420,6 +441,8 @@ def main():
             level[0, 17] = scaled_mask[0, 17] * 20
 
             level = force_path(level)
+
+            # level = add_jumpthru(level)
 
             return level
 

@@ -97,6 +97,7 @@ def generate_samples(
     render_images=True,
     save_tensors=False,
     save_dir="random_samples",
+    replace_noise=False
 ):
     """
     Generate samples given a pretrained TOAD-GAN (generators, noise_maps, reals, noise_amplitudes).
@@ -223,9 +224,14 @@ def generate_samples(
         # Generate num_samples samples in current scale
         for n in tqdm_wrap(range(0, num_samples, 1)):
             # Get noise image
-            z_curr = generate_spatial_noise(
-                [1, channels, int(round(nzx)), int(round(nzy))], device=opt.device
-            )
+            if replace_noise is not None:
+  
+                z_curr = replace_noise[(1, channels, int(round(nzx)), int(round(nzy)))].to(opt.device)
+
+            else:
+                z_curr = generate_spatial_noise(
+                    [1, channels, int(round(nzx)), int(round(nzy))], device=opt.device
+                )
             z_curr = m(z_curr)
 
             # Set up previous image I_prev

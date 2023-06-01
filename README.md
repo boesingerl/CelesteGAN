@@ -14,7 +14,7 @@ Then simply open the game, go into the Mod Options and generate a new gan level 
 
 ## Code
 
-This branch contains the code for training the GANs for generating levels, the code for the Everest mode is located in the [`mod`](https://github.com/boesingerl/CelesteGAN/tree/mod) branch.
+This branch contains the code for training the GANs for generating levels, the code for the Everest mod is located in the [`mod`](https://github.com/boesingerl/CelesteGAN/tree/mod) branch.
 
 ## Original work
 

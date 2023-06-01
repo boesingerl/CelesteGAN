@@ -7,7 +7,7 @@ dependencies:
   - ca-certificates
   - openssl
   - cudatoolkit=10.2
-  - torchvision==0.6.1
+  - pip=23.0.1
   - pygraphviz
   - pip:
       - jmespath==1.0.1
@@ -17,15 +17,18 @@ dependencies:
       - matplotlib==3.7.1
       - networkx==3.0
       - numpy==1.24.2
+      - pandas
       - onnxruntime==1.14.1
       - opencv-python==4.7.0.72
       - git+https://github.com/pvigier/perlin-numpy
       - PyYAML==6.0
       - scikit-image==0.20.0
       - scipy==1.9.1
+      - jupyterlab
       - torch==2.0.0
       - torchvision==0.15.1
       - tqdm==4.65.0
       - typed-argument-parser==1.8.0
       - wandb==0.14.0
+      - jupytext
 prefix: /home/leopaul/mambaforge/envs/gan

@@ -1,8 +1,8 @@
 # CelesteGAN : A Celeste level generator using GANs !
 
-<p align="center">
-  <img src="res/presentation.gif" width="100%"/>
-</p>
+## In-game level generation demo
+
+https://github.com/boesingerl/CelesteGAN/assets/32189761/d53a3f7b-d8e8-475a-93f1-86f026c64343
 
 This part is the [Everest](https://everestapi.github.io/) mod that uses CelesteGAN to generate levels directly in game. 
 

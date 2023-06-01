@@ -1,13 +1,12 @@
 # CelesteGAN : A Celeste level generator using GANs !
 
 <p align="center">
-  <img src="https://github.com/boesingerl/CelesteGAN/assets/32189761/45e5bb82-9ee5-4cea-bdea-22948793a7e2">
+  <img src="https://github.com/boesingerl/CelesteGAN/assets/32189761/66529591-b3ee-49cd-891d-efe50f3aefe1">
 </p>
-
 
 ## Demo
 
-https://github.com/boesingerl/CelesteGAN/assets/32189761/7b796abd-b56c-4f71-882c-b00215c903b8
+https://github.com/boesingerl/CelesteGAN/assets/32189761/52976f63-d715-433d-9d3a-df45dd40e6c1
 
 ## Getting started
 
